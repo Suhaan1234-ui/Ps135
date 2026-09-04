@@ -1,0 +1,63 @@
+# =========================
+# Environment / Secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+venv/
+.venv/
+env/
+
+.pytest_cache/
+.mypy_cache/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Node / React
+# =========================
+node_modules/
+dist/
+build/
+.npm/
+*.log
+
+# =========================
+# ML / Data
+# =========================
+ml/data/raw/
+ml/data/processed/
+
+# Don't upload large datasets
+*.zip
+*.parquet
+
+# =========================
+# Trained models
+# =========================
+# Uncomment if models become large
+# ml/models/*.pkl
+
+# =========================
+# IDE
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
