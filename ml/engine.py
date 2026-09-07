@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
+from datetime import date, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
@@ -51,13 +52,27 @@ def _json_safe(value: Any) -> Any:
 		return {str(key): _json_safe(item) for key, item in value.items()}
 	if isinstance(value, (list, tuple, set)):
 		return [_json_safe(item) for item in value]
+	if isinstance(value, np.ndarray):
+		return [_json_safe(item) for item in value.tolist()]
+	if value is pd.NaT:
+		return None
+	if isinstance(value, (pd.Timestamp, datetime, date)):
+		if isinstance(value, pd.Timestamp) and value is pd.NaT:
+			return None
+		return value.isoformat()
 	if isinstance(value, (np.integer,)):
 		return int(value)
 	if isinstance(value, (np.floating, float)):
 		return float(value) if np.isfinite(value) else None
 	if isinstance(value, np.bool_):
 		return bool(value)
-	if pd.isna(value):
+	if value is None:
+		return None
+	try:
+		missing = pd.isna(value)
+	except (TypeError, ValueError):
+		missing = False
+	if isinstance(missing, (bool, np.bool_)) and missing:
 		return None
 	return value
 
@@ -79,6 +94,21 @@ def _load_artifact(name: str) -> dict[str, Any]:
 		raise ArtifactLoadError(
 			f"Invalid {name} artifact: missing keys {sorted(missing)}"
 		)
+	if name == "retention":
+		pipeline = artifact["pipeline"]
+		if not callable(getattr(pipeline, "predict", None)) or not callable(getattr(pipeline, "predict_proba", None)):
+			raise ArtifactLoadError("Invalid retention artifact: pipeline must support predict and predict_proba")
+		if not isinstance(artifact["feature_columns"], list) or not isinstance(artifact["class_mapping"], dict) or not isinstance(artifact["risk_thresholds"], dict):
+			raise ArtifactLoadError("Invalid retention artifact: malformed feature, class, or threshold configuration")
+	elif name == "skill_gap":
+		if not isinstance(artifact["requirements_by_title"], dict) or not isinstance(artifact["aliases"], dict):
+			raise ArtifactLoadError("Invalid skill-gap artifact: malformed requirements or aliases")
+		if not isinstance(artifact["fuzzy_threshold"], (int, float)) or not isinstance(artifact["semantic_threshold"], (int, float)):
+			raise ArtifactLoadError("Invalid skill-gap artifact: malformed matching thresholds")
+	elif name == "employment":
+		for key in ("metric_definitions", "grouped_summaries", "quality_summary"):
+			if not isinstance(artifact[key], dict):
+				raise ArtifactLoadError(f"Invalid employment artifact: malformed {key}")
 	if name == "retention":
 		_patch_saved_imputers_for_runtime(artifact["pipeline"])
 	return artifact
@@ -230,16 +260,18 @@ def predict_retention(employee_data: Mapping[str, Any] | pd.DataFrame) -> dict[s
 def analyze_skill_gap(candidate_skills: Any, target_job: str) -> dict[str, Any]:
 	"""Compare candidate skills with the saved core, optional, and rare requirements."""
 	artifact = _artifacts()["skill_gap"]
+	aliases = artifact["aliases"]
+	normalized_candidates = _skill_list(candidate_skills, aliases)
 	title = _normalize_text(target_job)
 	profiles = artifact["title_skill_profiles"]
 	if title not in profiles:
 		return _json_safe({
-			"target_job": target_job, "job_found": False, "core_skills": [], "optional_skills": [],
+			"target_job": target_job, "candidate_skills": normalized_candidates, "job_found": False, "core_skills": [], "optional_skills": [],
 			"matched_skills": [], "matched_core_skills": [], "missing_skills": [],
 			"missing_core_skills": [], "skill_match_percentage": 0.0,
 			"core_skill_match_percentage": 0.0, "recommended_skills": [],
+			"matching_summary": {"matched_count": 0, "missing_count": 0, "core_matched_count": 0},
 		})
-	aliases = artifact["aliases"]
 	core = list(artifact["core_skills_by_title"].get(title, []))
 	optional = list(artifact["optional_skills_by_title"].get(title, []))
 	rare = list(artifact["rare_skills_by_title"].get(title, []))
@@ -250,8 +282,14 @@ def analyze_skill_gap(candidate_skills: Any, target_job: str) -> dict[str, Any]:
 	matched_set = set(matched)
 	missing_core = [skill for skill in core if skill not in matched_set]
 	missing_optional = [skill for skill in optional if skill not in matched_set]
+	semantic_available = _semantic_model() is not None
+	method_counts = {}
+	for detail in details.values():
+		method = detail["method"]
+		method_counts[method] = method_counts.get(method, 0) + 1
 	return _json_safe({
 		"target_job": artifact["title_to_display"].get(title, target_job),
+		"candidate_skills": normalized_candidates,
 		"job_found": True,
 		"core_skills": core,
 		"optional_skills": optional,
@@ -263,6 +301,14 @@ def analyze_skill_gap(candidate_skills: Any, target_job: str) -> dict[str, Any]:
 		"core_skill_match_percentage": round(100 * len(matched_set & set(core)) / len(core), 2) if core else 100.0,
 		"recommended_skills": missing_core + missing_optional,
 		"match_details": details,
+		"matching_summary": {
+			"matched_count": len(matched),
+			"missing_count": len(missing),
+			"core_matched_count": len(matched_set & set(core)),
+			"methods": method_counts,
+		},
+		"semantic_matching_available": semantic_available,
+		"semantic_matching_status": "available" if semantic_available else "unavailable",
 	})
 
 
@@ -294,6 +340,10 @@ def analyze_employment(filters: Mapping[str, Any] | None = None) -> dict[str, An
 		numerator = sum((record.get(numerator_names[stage]) or 0) for record in records)
 		denominator = sum((record.get(denominator_names[stage]) or 0) for record in records)
 		rates[f"{stage}_rate"] = round(numerator / denominator, 6) if denominator else None
+	for metric_name in ("pipeline_dropoff_rate", "program_effectiveness_score"):
+		available_values = [record.get(metric_name) for record in records if record.get(metric_name) is not None]
+		if available_values:
+			rates[metric_name] = sum(available_values) / len(available_values)
 	anomaly_report = [
 		row for row in artifact["anomaly_report"]
 		if all(row.get(field_map[key]) == filter_value for key, filter_value in filters.items())
