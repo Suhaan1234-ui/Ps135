@@ -1,15 +1,7 @@
 pandas
 numpy
-matplotlib
-seaborn
-scikit-learn
+scikit-learn==1.7.2
 xgboost
-imbalanced-learn
 joblib
-jupyter
-notebook
-ipykernel
-sentence-transformers
 rapidfuzz
-openpyxl
-shap
+sentence-transformers
