@@ -1,0 +1,15 @@
+pandas
+numpy
+matplotlib
+seaborn
+scikit-learn
+xgboost
+imbalanced-learn
+joblib
+jupyter
+notebook
+ipykernel
+sentence-transformers
+rapidfuzz
+openpyxl
+shap
