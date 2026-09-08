@@ -4,7 +4,7 @@
 
 ## 📌 Problem Statement
 
-SkillSync AI helps organizations and skilling initiatives make better workforce decisions using data and AI.
+SkillTrack AI helps organizations and skilling initiatives make better workforce decisions using data and AI.
 
 The platform provides:
 
